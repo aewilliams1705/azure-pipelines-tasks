@@ -1,12 +1,15 @@
 import fs = require('fs');
+import os = require('os');
 import path = require('path');
 import taskLib = require('azure-pipelines-task-lib/task');
 import toolLib = require('azure-pipelines-tool-lib/tool');
+import uuidV4 = require('uuid/v4');
 
 import { AzureStorageArtifactDownloader } from "./AzureStorageArtifacts/AzureStorageArtifactDownloader";
 import { JavaFilesExtractor } from './FileExtractor/JavaFilesExtractor';
 import {BIN_FOLDER} from "./FileExtractor/JavaFilesExtractor";
 
+const fileEndings = ['.tar', '.tar.gz', '.zip', '.7z', '.dmg', '.pkg'];
 taskLib.setResourcePath(path.join(__dirname, 'task.json'));
 
 async function run() {
@@ -65,13 +68,19 @@ async function getJava(versionSpec: string) {
         await sleepFor(250); //Wait for the file to be released before extracting it.
 
         const extractSource = buildFilePath(extractLocation, compressedFileExtension, fileNameAndPath);
-        const javaFilesExtractor = new JavaFilesExtractor();
-        jdkDirectory = await javaFilesExtractor.unzipJavaDownload(extractSource, compressedFileExtension, extractLocation);
+        try {
+            jdkDirectory = await unpackJava(extractSource, compressedFileExtension, extractLocation, jdkDirectory);
+          } catch(err) {
+            console.error(err);
+        }
     } else { //JDK is in a local directory. Extract to specified target directory.
         console.log(taskLib.loc('RetrievingJdkFromLocalPath'));
         compressedFileExtension = getFileEnding(taskLib.getInput('jdkFile', true));
-        const javaFilesExtractor = new JavaFilesExtractor();
-        jdkDirectory = await javaFilesExtractor.unzipJavaDownload(taskLib.getInput('jdkFile', true), compressedFileExtension, extractLocation);
+        try {
+            jdkDirectory = await unpackJava(taskLib.getInput('jdkFile', true), compressedFileExtension, extractLocation, jdkDirectory);
+          } catch(err) {
+            console.error(err);
+        }
     }
 
     console.log(taskLib.loc('SetJavaHome', jdkDirectory));
@@ -95,21 +104,147 @@ function buildFilePath(localPathRoot: string, fileEnding: string, fileNameAndPat
 }
 
 function getFileEnding(file: string): string {
-    let fileEnding = '';
+    for (const fileEnding of fileEndings) {
+        if (file.endsWith(fileEnding)) {
+            return fileEnding;  
+        }
+    }
+    throw new Error(taskLib.loc('UnsupportedFileExtension'));
+}
 
-    if (file.endsWith('.tar')) {
-        fileEnding = '.tar';
-    } else if (file.endsWith('.tar.gz')) {
-        fileEnding = '.tar.gz';
-    } else if (file.endsWith('.zip')) {
-        fileEnding = '.zip';
-    } else if (file.endsWith('.7z')) {
-        fileEnding = '.7z';
-    } else {
-        throw new Error(taskLib.loc('UnsupportedFileExtension'));
+async function unpackJava(sourceFile: string, compressedFileExtension: string, extractLocation: string, jdkDirectory: string): Promise<string> {
+    const javaFilesExtractor = new JavaFilesExtractor();
+    if (compressedFileExtension === '.dmg' && os.platform() === 'darwin') {
+        const VOLUMES_FOLDER = '/Volumes';
+
+        // Using set because 'includes' array method requires tsconfig option "lib": ["ES2017"]
+        const volumes: Set<string> = new Set(fs.readdirSync(VOLUMES_FOLDER));
+
+        await runScript(false, `sudo hdiutil attach "${sourceFile}"`, '');
+
+        const newVolumes: string[] = fs.readdirSync(VOLUMES_FOLDER).filter(volume => !volumes.has(volume));
+        if (newVolumes.length !== 1) {
+            throw new Error(taskLib.loc('UnsupportedDMGArchiveStructure'));
+        }
+
+        let volumePath: string = path.join(VOLUMES_FOLDER, newVolumes[0]);
+        let packages: string[] = fs.readdirSync(volumePath).filter(file => file.endsWith('.pkg'));
+
+        let pkgPath: string;
+        if (packages.length === 1) {
+            pkgPath = path.join(volumePath, packages[0]);
+        } else if (packages.length === 0) {
+            throw new Error(taskLib.loc('NoPKGFile'));
+        } else {
+            throw new Error(taskLib.loc('SeveralPKGFiles'));
+        }
+
+        jdkDirectory = await installJDK(pkgPath);
+
+        await runScript(false, `sudo hdiutil detach "${volumePath}"`, '');
+    }
+    else if (compressedFileExtension === '.pkg' && os.platform() === 'darwin') {
+        jdkDirectory = await installJDK(sourceFile);
+    }
+    else {
+        jdkDirectory = await javaFilesExtractor.unzipJavaDownload(sourceFile, compressedFileExtension, extractLocation);
+    }
+    return jdkDirectory;
+}
+
+async function installJDK(pkgPath: string): Promise<string> {
+    const JDK_FOLDER = '/Library/Java/JavaVirtualMachines';
+    const JDK_HOME_FOLDER = 'Contents/Home';
+
+    // Using set because 'includes' array method requires tsconfig option "lib": ["ES2017"]
+    const JDKs: Set<string> = new Set(fs.readdirSync(JDK_FOLDER));
+
+    await runScript(false, `sudo installer -package "${pkgPath}" -target /`, '');
+
+    const newJDKs = fs.readdirSync(JDK_FOLDER).filter(jdkName => !JDKs.has(jdkName));
+
+    if (newJDKs.length !== 1) {
+        throw new Error(taskLib.loc('NewJDKIsNotInstalled'));
     }
 
-    return fileEnding;
+    let jdkDirectory: string = path.join(JDK_FOLDER, newJDKs[0], JDK_HOME_FOLDER);
+    return jdkDirectory;
+}
+
+async function runScript(failOnStderr: boolean, script: string, workingDirectory: string): Promise<any> {
+    const tl = taskLib;
+    
+    try {
+        // Write the script to disk.
+        console.log(tl.loc('GeneratingScript'));
+        tl.assertAgent('2.115.0');
+        let tempDirectory = tl.getVariable('agent.tempDirectory');
+        tl.checkPath(tempDirectory, `${tempDirectory} (agent.tempDirectory)`);
+        let filePath = path.join(tempDirectory, uuidV4() + '.sh');
+        await fs.writeFileSync(
+            filePath,
+            script, // Don't add a BOM. It causes the script to fail on some operating systems (e.g. on Ubuntu 14).
+            { encoding: 'utf8' });
+
+        // Print one-liner scripts.
+        if (script.indexOf('\n') < 0 && script.toUpperCase().indexOf('##VSO[') < 0) {
+            console.log(tl.loc('ScriptContents'));
+            console.log(script);
+        }
+
+        // Create the tool runner.
+        console.log('========================== Starting Command Output ===========================');
+        let bash = tl.tool(tl.which('bash', true))
+            .arg('--noprofile')
+            .arg(`--norc`)
+            .arg(filePath);
+        let options = <any> {
+            cwd: workingDirectory,
+            failOnStdErr: false,
+            errStream: process.stdout, // Direct all output to STDOUT, otherwise the output may appear out
+            outStream: process.stdout, // of order since Node buffers it's own STDOUT but not STDERR.
+            ignoreReturnCode: true
+        };
+
+        // Listen for stderr.
+        let stderrFailure = false;
+        const aggregatedStderr: string[] = [];
+        if (failOnStderr) {
+            bash.on('stderr', (data: Buffer) => {
+                stderrFailure = true;
+                // Truncate to at most 10 error messages
+                if (aggregatedStderr.length < 10) {
+                    // Truncate to at most 1000 bytes
+                    if (data.length > 1000) {
+                        aggregatedStderr.push(`${data.toString('utf8', 0, 1000)}<truncated>`);
+                    } else {
+                        aggregatedStderr.push(data.toString('utf8'));
+                    }
+                } else if (aggregatedStderr.length === 10) {
+                    aggregatedStderr.push('Additional writes to stderr truncated');
+                }
+            });
+        }
+
+        // Run bash.
+        let exitCode: number = await bash.exec(options);
+
+        // Fail on exit code.
+        if (exitCode !== 0) {
+            tl.error(tl.loc('JS_ExitCode', exitCode));
+        }
+
+        // Fail on stderr.
+        if (stderrFailure) {
+            tl.error(tl.loc('JS_Stderr'));
+            aggregatedStderr.forEach((err: string) => {
+                tl.error(err);
+            });
+        }
+    }
+    catch (err) {
+        tl.setResult(tl.TaskResult.Failed, err.message || 'runScript() failed', true);
+    }
 }
 
 run();

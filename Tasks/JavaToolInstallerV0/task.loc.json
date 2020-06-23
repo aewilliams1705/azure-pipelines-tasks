@@ -13,7 +13,7 @@
   "author": "Microsoft Corporation",
   "version": {
     "Major": 0,
-    "Minor": 171,
+    "Minor": 172,
     "Patch": 0
   },
   "satisfies": [
@@ -177,6 +177,13 @@
     "CorrelationIdForARM": "ms-resource:loc.messages.CorrelationIdForARM",
     "JavaNotPreinstalled": "ms-resource:loc.messages.JavaNotPreinstalled",
     "UsePreinstalledJava": "ms-resource:loc.messages.UsePreinstalledJava",
-    "WrongArchiveStructure": "ms-resource:loc.messages.WrongArchiveStructure"
+    "WrongArchiveStructure": "ms-resource:loc.messages.WrongArchiveStructure",
+    "NewJDKIsNotInstalled": "ms-resource:loc.messages.NewJDKIsNotInstalled",
+    "UnsupportedDMGArchiveStructure": "ms-resource:loc.messages.UnsupportedDMGArchiveStructure",
+    "NoPKGFile": "ms-resource:loc.messages.NoPKGFile",
+    "SeveralPKGFiles": "ms-resource:loc.messages.SeveralPKGFiles",
+    "GeneratingScript": "ms-resource:loc.messages.GeneratingScript",
+    "ScriptContents": "ms-resource:loc.messages.ScriptContents",
+    "JS_ExitCode": "ms-resource:loc.messages.JS_ExitCode"
   }
 }

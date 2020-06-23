@@ -13,7 +13,7 @@
     "author": "Microsoft Corporation",
     "version": {
         "Major": 0,
-        "Minor": 171,
+        "Minor": 172,
         "Patch": 0
     },
     "satisfies": [
@@ -177,6 +177,13 @@
         "CorrelationIdForARM": "Correlation ID from ARM api call response : %s",
         "JavaNotPreinstalled": "Java %s is not preinstalled on this agent",
         "UsePreinstalledJava": "Use preinstalled JDK from %s",
-        "WrongArchiveStructure": "JDK file is not valid. Verify if JDK file contains only one root folder with 'bin' inside."
+        "WrongArchiveStructure": "JDK file is not valid. Verify if JDK file contains only one root folder with 'bin' inside.",
+        "NewJDKIsNotInstalled": "New JDK is not installed.",
+        "UnsupportedDMGArchiveStructure": "JDK file is not supported. Verify if JDK file contains exactly one folder inside.",
+        "NoPKGFile": "Could not find PKG file",
+        "SeveralPKGFiles": "Found more than one PKG files",
+        "GeneratingScript": "Generating script.",
+        "ScriptContents": "Script contents:",
+        "JS_ExitCode": "Bash exited with code '%s'."
     }
 }
