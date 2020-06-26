@@ -1,7 +1,7 @@
 import fs = require('fs');
 import os = require('os');
 import path = require('path');
-import taskLib = require('azure-pipelines-task-lib/task');
+import tl = require('azure-pipelines-task-lib/task');
 import toolLib = require('azure-pipelines-tool-lib/tool');
 import uuidV4 = require('uuid/v4');
 
@@ -10,84 +10,86 @@ import { JavaFilesExtractor } from './FileExtractor/JavaFilesExtractor';
 import {BIN_FOLDER} from "./FileExtractor/JavaFilesExtractor";
 
 const fileEndings = ['.tar', '.tar.gz', '.zip', '.7z', '.dmg', '.pkg'];
-taskLib.setResourcePath(path.join(__dirname, 'task.json'));
+tl.setResourcePath(path.join(__dirname, 'task.json'));
 
 async function run() {
     try {
-        let versionSpec = taskLib.getInput('versionSpec', true);
+        let versionSpec = tl.getInput('versionSpec', true);
         await getJava(versionSpec);
-        taskLib.setResult(taskLib.TaskResult.Succeeded, taskLib.loc('SucceedMsg'));
+        tl.setResult(tl.TaskResult.Succeeded, tl.loc('SucceedMsg'));
     } catch (error) {
-        taskLib.error(error.message);
-        taskLib.setResult(taskLib.TaskResult.Failed, error.message);
+        tl.error(error.message);
+        tl.setResult(tl.TaskResult.Failed, error.message);
     }
 }
 
 async function getJava(versionSpec: string) {
-    const preInstalled: boolean = ("PreInstalled" === taskLib.getInput('jdkSourceOption', true));
-    const fromAzure: boolean = ('AzureStorage' == taskLib.getInput('jdkSourceOption', true));
-    const extractLocation: string = taskLib.getPathInput('jdkDestinationDirectory', true);
-    const cleanDestinationDirectory: boolean = taskLib.getBoolInput('cleanDestinationDirectory', false);
+    const preInstalled: boolean = ("PreInstalled" === tl.getInput('jdkSourceOption', true));
+    const fromAzure: boolean = ('AzureStorage' == tl.getInput('jdkSourceOption', true));
+    const extractLocation: string = tl.getPathInput('jdkDestinationDirectory', true);
+    const cleanDestinationDirectory: boolean = tl.getBoolInput('cleanDestinationDirectory', false);
     let compressedFileExtension: string;
     let jdkDirectory: string;
-    const extendedJavaHome: string = `JAVA_HOME_${versionSpec}_${taskLib.getInput('jdkArchitectureOption', true)}`;
+    const extendedJavaHome: string = `JAVA_HOME_${versionSpec}_${tl.getInput('jdkArchitectureOption', true)}`;
 
     toolLib.debug('Trying to get tool from local cache first');
     const localVersions: string[] = toolLib.findLocalToolVersions('Java');
     const version: string = toolLib.evaluateVersions(localVersions, versionSpec);
 
      // Clean the destination folder before downloading and extracting?
-     if (cleanDestinationDirectory && taskLib.exist(extractLocation) && taskLib.stats(extractLocation).isDirectory) {
-        console.log(taskLib.loc('CleanDestDir', extractLocation));
+     if (cleanDestinationDirectory && tl.exist(extractLocation) && tl.stats(extractLocation).isDirectory) {
+        console.log(tl.loc('CleanDestDir', extractLocation));
 
         // delete the contents of the destination directory but leave the directory in place
         fs.readdirSync(extractLocation)
         .forEach((item: string) => {
             const itemPath = path.join(extractLocation, item);
-            taskLib.rmRF(itemPath);
+            tl.rmRF(itemPath);
         });
     }
 
     if (version) { //This version of Java JDK is already in the cache. Use it instead of downloading again.
-        console.log(taskLib.loc('Info_ResolvedToolFromCache', version));
+        console.log(tl.loc('Info_ResolvedToolFromCache', version));
     } else if (preInstalled) {
-        const preInstalledJavaDirectory: string | undefined = taskLib.getVariable(extendedJavaHome);
+        const preInstalledJavaDirectory: string | undefined = tl.getVariable(extendedJavaHome);
         if (preInstalledJavaDirectory === undefined) {
-            throw new Error(taskLib.loc('JavaNotPreinstalled', versionSpec));
+            throw new Error(tl.loc('JavaNotPreinstalled', versionSpec));
         }
-        console.log(taskLib.loc('UsePreinstalledJava', preInstalledJavaDirectory));
+        console.log(tl.loc('UsePreinstalledJava', preInstalledJavaDirectory));
         jdkDirectory = preInstalledJavaDirectory;
     } else if (fromAzure) { //Download JDK from an Azure blob storage location and extract.
-        console.log(taskLib.loc('RetrievingJdkFromAzure'));
-        const fileNameAndPath: string = taskLib.getInput('azureCommonVirtualFile', false);
-        compressedFileExtension = getFileEnding(fileNameAndPath);
+        console.log(tl.loc('RetrievingJdkFromAzure'));
 
-        const azureDownloader = new AzureStorageArtifactDownloader(taskLib.getInput('azureResourceManagerEndpoint', true),
-            taskLib.getInput('azureStorageAccountName', true), taskLib.getInput('azureContainerName', true), "");
+        const azureDownloader = new AzureStorageArtifactDownloader(tl.getInput('azureResourceManagerEndpoint', true),
+        tl.getInput('azureStorageAccountName', true), tl.getInput('azureContainerName', true), "");
+
+        const fileNameAndPath: string = tl.getInput('azureCommonVirtualFile', false);
         await azureDownloader.downloadArtifacts(extractLocation, '*' + fileNameAndPath);
         await sleepFor(250); //Wait for the file to be released before extracting it.
 
+        if (checkFileEnding) {
+            compressedFileExtension = getFileEnding(fileNameAndPath);
+        } else {
+            throw new Error(tl.loc('UnsupportedFileExtension'));
+        }
+
         const extractSource = buildFilePath(extractLocation, compressedFileExtension, fileNameAndPath);
-        try {
-            jdkDirectory = await unpackJava(extractSource, compressedFileExtension, extractLocation, jdkDirectory);
-          } catch(err) {
-            console.error(err);
-        }
+        jdkDirectory = await unpackJava(extractSource, compressedFileExtension, extractLocation, jdkDirectory);
     } else { //JDK is in a local directory. Extract to specified target directory.
-        console.log(taskLib.loc('RetrievingJdkFromLocalPath'));
-        compressedFileExtension = getFileEnding(taskLib.getInput('jdkFile', true));
-        try {
-            jdkDirectory = await unpackJava(taskLib.getInput('jdkFile', true), compressedFileExtension, extractLocation, jdkDirectory);
-          } catch(err) {
-            console.error(err);
+        console.log(tl.loc('RetrievingJdkFromLocalPath'));
+        if (checkFileEnding) {
+            compressedFileExtension = getFileEnding(tl.getInput('jdkFile', true));
+        } else {
+            throw new Error(tl.loc('UnsupportedFileExtension'));
         }
+        jdkDirectory = await unpackJava(tl.getInput('jdkFile', true), compressedFileExtension, extractLocation, jdkDirectory);
     }
 
-    console.log(taskLib.loc('SetJavaHome', jdkDirectory));
-    console.log(taskLib.loc('SetExtendedJavaHome', extendedJavaHome, jdkDirectory));
-    taskLib.setVariable('JAVA_HOME', jdkDirectory);
-    taskLib.setVariable(extendedJavaHome, jdkDirectory);
-    toolLib.prependPath(path.join(jdkDirectory, BIN_FOLDER));
+    console.log(tl.loc('SetJavaHome', jdkDirectory));
+    console.log(tl.loc('SetExtendedJavaHome', extendedJavaHome, jdkDirectory));
+    tl.setVariable('JAVA_HOME', jdkDirectory);
+    tl.setVariable(extendedJavaHome, jdkDirectory);
+    tl.prependPath(path.join(jdkDirectory, BIN_FOLDER));
 }
 
 function sleepFor(sleepDurationInMillisecondsSeconds): Promise<any> {
@@ -103,13 +105,21 @@ function buildFilePath(localPathRoot: string, fileEnding: string, fileNameAndPat
     return extractSource;
 }
 
+function checkFileEnding(file: string): boolean {
+    for (const fileEnding of fileEndings) {
+        if (file.endsWith(fileEnding)) {
+            return true;  
+        }
+    }
+    return false;
+}
+
 function getFileEnding(file: string): string {
     for (const fileEnding of fileEndings) {
         if (file.endsWith(fileEnding)) {
             return fileEnding;  
         }
     }
-    throw new Error(taskLib.loc('UnsupportedFileExtension'));
 }
 
 async function unpackJava(sourceFile: string, compressedFileExtension: string, extractLocation: string, jdkDirectory: string): Promise<string> {
@@ -124,7 +134,7 @@ async function unpackJava(sourceFile: string, compressedFileExtension: string, e
 
         const newVolumes: string[] = fs.readdirSync(VOLUMES_FOLDER).filter(volume => !volumes.has(volume));
         if (newVolumes.length !== 1) {
-            throw new Error(taskLib.loc('UnsupportedDMGArchiveStructure'));
+            throw new Error(tl.loc('UnsupportedDMGArchiveStructure'));
         }
 
         let volumePath: string = path.join(VOLUMES_FOLDER, newVolumes[0]);
@@ -134,9 +144,9 @@ async function unpackJava(sourceFile: string, compressedFileExtension: string, e
         if (packages.length === 1) {
             pkgPath = path.join(volumePath, packages[0]);
         } else if (packages.length === 0) {
-            throw new Error(taskLib.loc('NoPKGFile'));
+            throw new Error(tl.loc('NoPKGFile'));
         } else {
-            throw new Error(taskLib.loc('SeveralPKGFiles'));
+            throw new Error(tl.loc('SeveralPKGFiles'));
         }
 
         jdkDirectory = await installJDK(pkgPath);
@@ -164,7 +174,7 @@ async function installJDK(pkgPath: string): Promise<string> {
     const newJDKs = fs.readdirSync(JDK_FOLDER).filter(jdkName => !JDKs.has(jdkName));
 
     if (newJDKs.length !== 1) {
-        throw new Error(taskLib.loc('NewJDKIsNotInstalled'));
+        throw new Error(tl.loc('NewJDKIsNotInstalled'));
     }
 
     let jdkDirectory: string = path.join(JDK_FOLDER, newJDKs[0], JDK_HOME_FOLDER);
@@ -172,8 +182,6 @@ async function installJDK(pkgPath: string): Promise<string> {
 }
 
 async function runScript(failOnStderr: boolean, script: string, workingDirectory: string): Promise<any> {
-    const tl = taskLib;
-    
     try {
         // Write the script to disk.
         console.log(tl.loc('GeneratingScript'));
