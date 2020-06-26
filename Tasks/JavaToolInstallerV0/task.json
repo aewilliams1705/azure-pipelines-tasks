@@ -184,6 +184,9 @@
         "SeveralPKGFiles": "Found more than one PKG files",
         "GeneratingScript": "Generating script.",
         "ScriptContents": "Script contents:",
-        "JS_ExitCode": "Bash exited with code '%s'."
+        "JS_ExitCode": "Bash exited with code '%s'.",
+        "InstallJDK": "Installing JDK",
+        "AttachDiskImage": "Attaching a disk image",
+        "DetachDiskImage": "Detaching a disk image"
     }
 }
